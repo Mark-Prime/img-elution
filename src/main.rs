@@ -1,14 +1,13 @@
-use image::{self, ImageBuffer, Pixel};
+use image::{self, ImageBuffer, Pixel, Rgb};
 use rand::{thread_rng, Rng};
 use std::{cmp, fs::DirBuilder};
-use image::Rgb;
 use palette::{FromColor, ColorDifference, Srgb, Lab};
 use std::thread;
 use std::sync::{Arc, Mutex};
 
 #[derive(Copy, Clone, Debug)]
 struct SlopeLine {
-    slope: i32,
+    slope: f64,
     origin: i32,
     color: [u8; 3],
     pub score: f64,
@@ -19,8 +18,14 @@ impl SlopeLine {
     fn new(x:u32) -> SlopeLine {
         let mut rng = thread_rng();
 
-        let slope = rng.gen_range(-20..=20);
-        let origin = rng.gen_range(-(x as i32)..x as i32*2) as i32;
+        let slope = rng.gen_range(-5.0..=5.0);
+        let mut origin = rng.gen_range(0..x as i32) as i32;
+
+        if slope > 1.0 {
+            origin = rng.gen_range(0..(x as f64 * slope) as i32) as i32;
+        } else if slope < -1.0 {
+            origin = rng.gen_range(((x as f64 * slope) as i32)..x as i32);
+        }
 
         let r = rng.gen_range(0..256) as u8;
         let g = rng.gen_range(0..256) as u8;
@@ -37,14 +42,14 @@ impl SlopeLine {
     fn give_birth(&self) -> SlopeLine {
         let mut rng = thread_rng();
 
-        let mut slope: i32 = self.slope.clone();
+        let mut slope: f64 = self.slope.clone();
         let mut origin = self.origin.clone();
         let color = self.color.clone();
         let mut r = color[0];
         let mut g = color[1];
         let mut b = color[2];
 
-        slope = rng.gen_range(slope - 2..=slope + 2);
+        slope = rng.gen_range((slope - 2.0)..=(slope + 2.0));
         origin = rng.gen_range(origin-10..=origin+10);
         r = rng.gen_range(r - (cmp::min(r, 20) as u8)..=cmp::min(r as i32 + 20, 255) as u8);
         g = rng.gen_range(g - (cmp::min(g, 20) as u8)..=cmp::min(g as i32  + 20, 255) as u8);
@@ -108,6 +113,7 @@ fn main() {
         Ok(img) => img,
         Err(err) => panic!("{}", err),
     };
+
     let img = Arc::new(Mutex::new(img.into_rgb8()));
 
     let (imgx, imgy) = img.lock().unwrap().dimensions();
@@ -134,7 +140,7 @@ fn main() {
         for f in 0..100 {
             let mut handles = vec![];
 
-            for thread_count in 0..5 {
+            for thread_count in 0..10 {
                 let processed_lines = Arc::clone(&processed_lines);
 
                 let imgbuf = Arc::clone(&imgbuf);
@@ -142,12 +148,12 @@ fn main() {
                 let lines = Arc::clone(&lines);
 
                 let handle = thread::spawn(move || {
-                    for line_index in (100 * thread_count)..(100 * (thread_count + 1)) {
+                    for line_index in (50 * thread_count)..(50 * (thread_count + 1)) {
                         let all_lines = lines.lock().unwrap();
                         let mut line = *all_lines[line_index].lock().unwrap();
                         
                         for x in 0..imgx {
-                            let y = (line.slope*x as i32) + line.origin;
+                            let y = (line.slope*x as f64) as i32 + line.origin;
 
                             if y >= 0 && y < imgy as i32 {
                                 let prev_img = imgbuf.lock().unwrap();
@@ -216,11 +222,11 @@ fn main() {
         let mut any_improvement = false;
         let mut improvement = 0.0;
 
-        for line_index in (0..100).rev() {
+        for line_index in 0..100 {
             let line = lines[line_index];
 
             for x in 0..imgx {
-                let y = (line.slope*x as i32) + line.origin;
+                let y = (line.slope*x as f64) as i32 + line.origin;
 
                 if y >= 0 && y < imgy as i32 {
                     let imgbuf = Arc::clone(&imgbuf);
@@ -232,7 +238,7 @@ fn main() {
                     let prev_diff = color_difference_pixel(img.get_pixel(x, y as u32), prev_img.get_pixel(x, y as u32));
 
                     if difference > prev_diff {
-                        prev_img.put_pixel(x, y as u32, image::Rgb(line.color));
+                        prev_img.put_pixel(x, y as u32, Rgb(line.color));
                         any_improvement = true;
                         improvement += difference - prev_diff;
                     }

@@ -3,5 +3,8 @@
 *.jpg
 /*algo*
 *.exe
-output
-output2
+/briar
+/bugs*
+/cat*
+/shrek*
+/output*
