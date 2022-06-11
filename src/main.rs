@@ -19,12 +19,12 @@ impl SlopeLine {
         let mut rng = thread_rng();
 
         let slope = rng.gen_range(-5.0..=5.0);
-        let mut origin = rng.gen_range(0..x as i32) as i32;
+        let origin: i32;
 
-        if slope > 1.0 {
-            origin = rng.gen_range(0..(x as f64 * slope) as i32) as i32;
-        } else if slope < -1.0 {
-            origin = rng.gen_range(((x as f64 * slope) as i32)..x as i32);
+        if slope > 0.0 {
+            origin = rng.gen_range(0..(x as i32 + (x as f64 * slope) as i32)) as i32;
+        } else {
+            origin = rng.gen_range((0 + (x as f64 * slope) as i32)..x as i32);
         }
 
         let r = rng.gen_range(0..256) as u8;
@@ -151,7 +151,12 @@ fn main() {
                     for line_index in (50 * thread_count)..(50 * (thread_count + 1)) {
                         let all_lines = lines.lock().unwrap();
                         let mut line = *all_lines[line_index].lock().unwrap();
-                        
+
+                        if line.count > 1 {
+                            processed_lines.lock().unwrap().push(line);
+                            continue;
+                        }
+
                         for x in 0..imgx {
                             let y = (line.slope*x as f64) as i32 + line.origin;
 
@@ -193,10 +198,7 @@ fn main() {
 
             if f < 99 {
                 for index in 0..100 {
-                    let mut line = processed_lines[index];
-
-                    line.score = 0.0;
-                    line.count = 1;
+                    let line = processed_lines[index];
 
                     if line.score > 0.0 {
                         lines.push(Arc::new(Mutex::new(line)));
@@ -215,14 +217,12 @@ fn main() {
             }
         }
 
-        lines.lock().unwrap().truncate(0);
-
         let lines = processed_lines.lock().unwrap();
 
         let mut any_improvement = false;
         let mut improvement = 0.0;
 
-        for line_index in 0..100 {
+        for line_index in (0..100).rev() {
             let line = lines[line_index];
 
             for x in 0..imgx {
