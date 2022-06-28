@@ -1,5 +1,6 @@
 use image::{self, ImageBuffer, Pixel, Rgb};
 use rand::{thread_rng, Rng};
+use core::panic;
 use std::{cmp, fs::DirBuilder};
 use palette::{FromColor, ColorDifference, Srgb, Lab};
 use std::thread;
@@ -7,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Copy, Clone, Debug)]
 struct SlopeLine {
-    slope: f64,
+    slope: f32,
     origin: i32,
     color: [u8; 3],
     pub score: f64,
@@ -18,13 +19,14 @@ impl SlopeLine {
     fn new(x:u32) -> SlopeLine {
         let mut rng = thread_rng();
 
-        let slope = rng.gen_range(-5.0..=5.0);
+        let slope: f32 = ((rng.gen_range(-5.0..=5.0) * 1000.0) as f32).floor() / 1000.0;
+
         let origin: i32;
 
         if slope > 0.0 {
-            origin = rng.gen_range(0..(x as i32 + (x as f64 * slope) as i32)) as i32;
+            origin = rng.gen_range(0..(x as i32 + (x as f32 * slope) as i32)) as i32;
         } else {
-            origin = rng.gen_range((0 + (x as f64 * slope) as i32)..x as i32);
+            origin = rng.gen_range((0 + (x as f32 * slope) as i32)..x as i32);
         }
 
         let r = rng.gen_range(0..256) as u8;
@@ -42,26 +44,32 @@ impl SlopeLine {
     fn give_birth(&self) -> SlopeLine {
         let mut rng = thread_rng();
 
-        let mut slope: f64 = self.slope.clone();
+        let mut slope: f32 = self.slope.clone();
         let mut origin = self.origin.clone();
         let color = self.color.clone();
         let mut r = color[0];
         let mut g = color[1];
         let mut b = color[2];
 
-        slope = rng.gen_range((slope - 2.0)..=(slope + 2.0));
+        slope = ((rng.gen_range((slope - 3.0)..=(slope + 3.0)) * 1000.0) as f32).floor() / 1000.0;
         origin = rng.gen_range(origin-10..=origin+10);
+
         r = rng.gen_range(r - (cmp::min(r, 20) as u8)..=cmp::min(r as i32 + 20, 255) as u8);
         g = rng.gen_range(g - (cmp::min(g, 20) as u8)..=cmp::min(g as i32  + 20, 255) as u8);
         b = rng.gen_range(b - (cmp::min(b, 20) as u8)..=cmp::min(b as i32 + 20, 255) as u8);
 
-        SlopeLine {
+        let new_line = SlopeLine {
             slope: slope,
             origin: origin,
             color: [r, g, b],
             score: 0.0,
             count: 1
-        }
+        };
+
+        // println!("new_line: {:?}, old_line: {:?}", new_line, self);
+
+        return new_line;
+
     }
 }
 
@@ -130,8 +138,8 @@ fn main() {
     let mut i = 0;
 
     loop {
-        let lines = Arc::new(Mutex::new(vec!()));
-        let processed_lines = Arc::new(Mutex::new(vec![])); 
+        let mut lines = Arc::new(Mutex::new(vec!()));
+        let processed_lines = Arc::new(Mutex::new(vec![]));
             
         for _ in 0..500 {
             lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
@@ -140,7 +148,7 @@ fn main() {
         for f in 0..100 {
             let mut handles = vec![];
 
-            for thread_count in 0..10 {
+            for thread_count in 0..5 {
                 let processed_lines = Arc::clone(&processed_lines);
 
                 let imgbuf = Arc::clone(&imgbuf);
@@ -148,17 +156,17 @@ fn main() {
                 let lines = Arc::clone(&lines);
 
                 let handle = thread::spawn(move || {
-                    for line_index in (50 * thread_count)..(50 * (thread_count + 1)) {
-                        let all_lines = lines.lock().unwrap();
+                    for line_index in (100 * thread_count)..(100 * (thread_count + 1)) {
+                        let all_lines = &mut *lines.lock().unwrap();
                         let mut line = *all_lines[line_index].lock().unwrap();
 
-                        if line.count > 1 {
+                        if line.score > 0.0 {
                             processed_lines.lock().unwrap().push(line);
                             continue;
                         }
 
                         for x in 0..imgx {
-                            let y = (line.slope*x as f64) as i32 + line.origin;
+                            let y = (line.slope*x as f32) as i32 + line.origin;
 
                             if y >= 0 && y < imgy as i32 {
                                 let prev_img = imgbuf.lock().unwrap();
@@ -173,10 +181,10 @@ fn main() {
                                 }
 
                                 line.count += 1;
-
-                                processed_lines.lock().unwrap().push(line);
                             }
                         }
+
+                        processed_lines.lock().unwrap().push(line);
                     }
                 });
 
@@ -187,46 +195,78 @@ fn main() {
                 handle.join().unwrap();
             }
 
-            let mut processed_lines = processed_lines.lock().unwrap();
+            let mut p_lines = &mut *processed_lines.lock().unwrap();
     
             // processed_lines.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            processed_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
-            processed_lines.truncate(100);
+            p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
 
-            let mut lines = lines.lock().unwrap();
-            lines.truncate(0);
+            let mut slopes: Vec<(i32, f32)> = vec![];
+            let mut filtered_lines = vec![];
+
+            for i in 0..p_lines.len() {
+                let mut line = p_lines[i];
+
+                if line.score == 0.0 {
+                    continue;
+                }
+
+                if slopes.contains(&(line.origin, line.slope)) {
+                    line.score = 0.0;
+                    filtered_lines.push(line);
+                    continue;
+                } 
+
+                slopes.push((line.origin, line.slope));
+                filtered_lines.push(line);
+            }
+
+            p_lines = &mut filtered_lines;
+            
+            p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
+            p_lines.truncate(100);
+            let mut new_lines = vec![];
 
             if f < 99 {
-                for index in 0..100 {
-                    let line = processed_lines[index];
+                for index in 0..cmp::min(100, p_lines.len()) {
+                    let line = p_lines[index];
 
                     if line.score > 0.0 {
-                        lines.push(Arc::new(Mutex::new(line)));
-                        lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        lines.push(Arc::new(Mutex::new(line.give_birth())));
-                    } else {
-                        lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
-                        lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
-                        lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
-                        lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
-                        lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+                        new_lines.push(Arc::new(Mutex::new(line)));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
                     }
                 }
+
+                while new_lines.len() < 500 {
+                    new_lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+                }
+
+                lines = Arc::new(Mutex::new(new_lines));
+            } else {
+                for index in 0..100 {
+                    let line = p_lines[index];
+
+                    if line.score > 0.0 {
+                        new_lines.push(Arc::new(Mutex::new(line)));
+                    }
+                }
+
+                lines = Arc::new(Mutex::new(new_lines));
             }
         }
 
-        let lines = processed_lines.lock().unwrap();
+        let lines = &mut *lines.lock().unwrap();
 
         let mut any_improvement = false;
         let mut improvement = 0.0;
 
-        for line_index in (0..100).rev() {
-            let line = lines[line_index];
+        for line_index in (0..lines.len()).rev() {
+            let line = lines[line_index].lock().unwrap();
 
             for x in 0..imgx {
-                let y = (line.slope*x as f64) as i32 + line.origin;
+                let y = (line.slope*x as f32) as i32 + line.origin;
 
                 if y >= 0 && y < imgy as i32 {
                     let imgbuf = Arc::clone(&imgbuf);
@@ -252,7 +292,7 @@ fn main() {
     
         imgbuf.lock().unwrap().save(path).unwrap();
 
-        println!("Done saving output{}.png with an improvement of {}", i, improvement);
+        println!("Done saving output{}.png with an improvement of {} using {} unique lines", i, improvement, lines.len());
 
         if any_improvement == false {
             break;
