@@ -230,13 +230,15 @@ fn main() {
                 for index in 0..cmp::min(100, p_lines.len()) {
                     let line = p_lines[index];
 
-                    if line.score > 0.0 {
-                        new_lines.push(Arc::new(Mutex::new(line)));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                    if line.score == 0.0 {
+                        break;
                     }
+
+                    new_lines.push(Arc::new(Mutex::new(line)));
+                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
                 }
 
                 while new_lines.len() < 500 {
