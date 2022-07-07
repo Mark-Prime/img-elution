@@ -3,7 +3,7 @@ use rand::{thread_rng, Rng};
 use core::panic;
 use std::{cmp, fs::DirBuilder};
 use palette::{FromColor, ColorDifference, Srgb, Lab};
-use std::thread;
+use std::{thread, fs};
 use std::sync::{Arc, Mutex};
 
 #[derive(Copy, Clone, Debug)]
@@ -66,8 +66,6 @@ impl SlopeLine {
             count: 1
         };
 
-        // println!("new_line: {:?}, old_line: {:?}", new_line, self);
-
         return new_line;
 
     }
@@ -117,187 +115,234 @@ fn color_difference_pixel(rgb1: &Rgb<u8>, rgb2: &Rgb<u8>) -> f64 {
 }
 
 fn main() {
-    let img = match image::open("input.png") {
-        Ok(img) => img,
-        Err(err) => panic!("{}", err),
-    };
+    let input = fs::read_dir("./input").expect("Folder not found");
 
-    let img = Arc::new(Mutex::new(img.into_rgb8()));
+    let first_img_path = fs::read_dir("./input").expect("Folder not found").next().expect("Folder is empty").expect("Folder is empty");
+    let first_img_file = image::open(first_img_path.path()).unwrap();
+    let first_img_rgb = first_img_file.into_rgb8();
+    let (first_imgx, first_imgy) = first_img_rgb.dimensions();
 
-    let (imgx, imgy) = img.lock().unwrap().dimensions();
+    if first_imgx == 0 || first_imgy == 0 {
+        panic!("Input is empty");
+    }
 
-    let imgbuf = ImageBuffer::new(imgx, imgy);
-    
-    println!("Img dimensions: {} {}", imgx, imgy);
+    let mut imgbuf = ImageBuffer::new(first_imgx, first_imgy);
 
-    DirBuilder::new().recursive(true).create("./output").expect("Error in folder creation");
-    imgbuf.save("output/output0.png").expect("Error in file creation");
+    let mut input_count = 0;
 
-    let imgbuf = Arc::new(Mutex::new(imgbuf));
+    for entry in input {
+        let path = entry.unwrap().path();
 
-    let mut i = 0;
+        let img = match image::open(path) {
+            Ok(img) => img,
+            Err(err) => {
+                println!("{}", err);
+                break;
+            },
+        };
 
-    loop {
-        let mut lines = Arc::new(Mutex::new(vec!()));
-        let processed_lines = Arc::new(Mutex::new(vec![]));
-            
-        for _ in 0..500 {
-            lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+        input_count += 1;
+
+        let img = Arc::new(Mutex::new(img.into_rgb8()));
+
+        let (imgx, imgy) = img.lock().unwrap().dimensions();
+
+        if first_imgx != imgx {
+            break;
         }
 
-        for f in 0..100 {
-            let mut handles = vec![];
+        if first_imgy != imgy {
+            break;
+        }
 
-            for thread_count in 0..5 {
-                let processed_lines = Arc::clone(&processed_lines);
+        let perfect_score = (imgx * imgy) as f64 * 100.0;
+        
+        println!("Img dimensions: {} {}", imgx, imgy);
 
-                let imgbuf = Arc::clone(&imgbuf);
-                let img = Arc::clone(&img);
-                let lines = Arc::clone(&lines);
+        DirBuilder::new().recursive(true).create("./output").expect("Error in folder creation");
+        imgbuf.save("output/output0.png").expect("Error in file creation");
 
-                let handle = thread::spawn(move || {
-                    for line_index in (100 * thread_count)..(100 * (thread_count + 1)) {
-                        let all_lines = &mut *lines.lock().unwrap();
-                        let mut line = *all_lines[line_index].lock().unwrap();
+        let imgbuffer = Arc::new(Mutex::new(imgbuf));
 
-                        if line.score > 0.0 {
-                            processed_lines.lock().unwrap().push(line);
-                            continue;
-                        }
+        let mut i = 0;
 
-                        for x in 0..imgx {
-                            let y = (line.slope*x as f32) as i32 + line.origin;
+        loop {
+            let mut lines = Arc::new(Mutex::new(vec!()));
+            let processed_lines = Arc::new(Mutex::new(vec![]));
+                
+            for _ in 0..500 {
+                lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+            }
 
-                            if y >= 0 && y < imgy as i32 {
-                                let prev_img = imgbuf.lock().unwrap();
+            for f in 0..100 {
+                let mut handles = vec![];
 
-                                let img = img.lock().unwrap();
+                for thread_count in 0..5 {
+                    let processed_lines = Arc::clone(&processed_lines);
 
-                                let difference = color_difference(img.get_pixel(x, y as u32), line.color);
-                                let prev_diff = color_difference_pixel(img.get_pixel(x, y as u32), prev_img.get_pixel(x, y as u32));
+                    let imgbuffer = Arc::clone(&imgbuffer);
+                    let img = Arc::clone(&img);
+                    let lines = Arc::clone(&lines);
 
-                                if difference > prev_diff {
-                                    line.score += difference - prev_diff;
-                                }
+                    let handle = thread::spawn(move || {
+                        for line_index in (100 * thread_count)..(100 * (thread_count + 1)) {
+                            let all_lines = &mut *lines.lock().unwrap();
+                            let mut line = *all_lines[line_index].lock().unwrap();
 
-                                line.count += 1;
+                            if line.score > 0.0 {
+                                processed_lines.lock().unwrap().push(line);
+                                continue;
                             }
+
+                            for x in 0..imgx {
+                                let y = (line.slope*x as f32) as i32 + line.origin;
+
+                                if y >= 0 && y < imgy as i32 {
+                                    let prev_img = imgbuffer.lock().unwrap();
+
+                                    let img = img.lock().unwrap();
+
+                                    let difference = color_difference(img.get_pixel(x, y as u32), line.color);
+                                    let prev_diff = color_difference_pixel(img.get_pixel(x, y as u32), prev_img.get_pixel(x, y as u32));
+
+                                    if difference > prev_diff {
+                                        line.score += difference - prev_diff;
+                                    }
+
+                                    line.count += 1;
+                                }
+                            }
+
+                            processed_lines.lock().unwrap().push(line);
                         }
+                    });
 
-                        processed_lines.lock().unwrap().push(line);
-                    }
-                });
-
-                handles.push(handle);
-            }
-
-            for handle in handles {
-                handle.join().unwrap();
-            }
-
-            let mut p_lines = &mut *processed_lines.lock().unwrap();
-    
-            // processed_lines.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
-
-            let mut slopes: Vec<(i32, f32)> = vec![];
-            let mut filtered_lines = vec![];
-
-            for i in 0..p_lines.len() {
-                let mut line = p_lines[i];
-
-                if line.score == 0.0 {
-                    continue;
+                    handles.push(handle);
                 }
 
-                if slopes.contains(&(line.origin, line.slope)) {
-                    line.score = 0.0;
-                    filtered_lines.push(line);
-                    continue;
-                } 
+                for handle in handles {handle.join().unwrap();}
 
-                slopes.push((line.origin, line.slope));
-                filtered_lines.push(line);
-            }
+                let mut p_lines = &mut *processed_lines.lock().unwrap();
 
-            p_lines = &mut filtered_lines;
-            
-            p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
-            p_lines.truncate(100);
-            let mut new_lines = vec![];
+                p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
 
-            if f < 99 {
-                for index in 0..cmp::min(100, p_lines.len()) {
-                    let line = p_lines[index];
+                let mut slopes: Vec<(i32, f32)> = vec![];
+                let mut filtered_lines = vec![];
+
+                for i in 0..p_lines.len() {
+                    let mut line = p_lines[i];
 
                     if line.score == 0.0 {
-                        break;
+                        continue;
                     }
 
-                    new_lines.push(Arc::new(Mutex::new(line)));
-                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                    new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                    if slopes.contains(&(line.origin, line.slope)) {
+                        line.score = 0.0;
+                        filtered_lines.push(line);
+                        continue;
+                    } 
+
+                    slopes.push((line.origin, line.slope));
+                    filtered_lines.push(line);
                 }
 
-                while new_lines.len() < 500 {
-                    new_lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
-                }
+                p_lines = &mut filtered_lines;
+                
+                p_lines.sort_by(|a, b| (b.score/b.count as f64).partial_cmp(&(&a.score / *&a.count as f64)).unwrap());
 
-                lines = Arc::new(Mutex::new(new_lines));
-            } else {
-                for index in 0..cmp::min(100, (imgx + i) / 100) {
-                    let line = p_lines[index as usize];
+                p_lines.truncate(100);
+                let mut new_lines = vec![];
 
-                    if line.score > 0.0 {
+                if f < 99 {
+                    for index in 0..cmp::min(100, p_lines.len()) {
+                        let line = p_lines[index];
+
+                        if line.score == 0.0 {
+                            break;
+                        }
+
                         new_lines.push(Arc::new(Mutex::new(line)));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
                     }
-                }
 
-                lines = Arc::new(Mutex::new(new_lines));
-            }
-        }
-
-        let lines = &mut *lines.lock().unwrap();
-
-        let mut any_improvement = false;
-        let mut improvement = 0.0;
-
-        for line_index in (0..lines.len()).rev() {
-            let line = lines[line_index].lock().unwrap();
-
-            for x in 0..imgx {
-                let y = (line.slope*x as f32) as i32 + line.origin;
-
-                if y >= 0 && y < imgy as i32 {
-                    let imgbuf = Arc::clone(&imgbuf);
-                    let mut prev_img = imgbuf.lock().unwrap();
-
-                    let img = img.lock().unwrap();
-
-                    let difference = color_difference(img.get_pixel(x, y as u32), line.color);
-                    let prev_diff = color_difference_pixel(img.get_pixel(x, y as u32), prev_img.get_pixel(x, y as u32));
-
-                    if difference > prev_diff {
-                        prev_img.put_pixel(x, y as u32, Rgb(line.color));
-                        any_improvement = true;
-                        improvement += difference - prev_diff;
+                    while new_lines.len() < 500 {
+                        new_lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
                     }
+
+                    lines = Arc::new(Mutex::new(new_lines));
+                } else {
+                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i) / 100) {
+                        let line = p_lines[index as usize];
+
+                        if line.score > 0.0 {
+                            new_lines.push(Arc::new(Mutex::new(line)));
+                        }
+                    }
+
+                    lines = Arc::new(Mutex::new(new_lines));
                 }
             }
-        }
 
-        i += 1;
+            let lines = &mut *lines.lock().unwrap();
+            let mut improvement = 0.0;
 
-        let path = format!("output/output{}.png", i);
-    
-        imgbuf.lock().unwrap().save(path).unwrap();
+            for line_index in (0..lines.len()).rev() {
+                let line = lines[line_index].lock().unwrap();
 
-        println!("Done saving output{}.png with an improvement of {} using {} unique lines", i, improvement, lines.len());
+                for x in 0..imgx {
+                    let y = (line.slope*x as f32) as i32 + line.origin;
 
-        if any_improvement == false {
-            break;
+                    if y >= 0 && y < imgy as i32 {
+                        let imgbuffer = Arc::clone(&imgbuffer);
+                        let mut prev_img = imgbuffer.lock().unwrap();
+
+                        let img = img.lock().unwrap();
+                        let img_pixel = img.get_pixel(x, y as u32);
+
+                        let difference = color_difference(img_pixel, line.color);
+                        let prev_diff = color_difference_pixel(img_pixel, prev_img.get_pixel(x, y as u32));
+
+                        if difference > prev_diff {
+                            prev_img.put_pixel(x, y as u32, Rgb(line.color));
+                            improvement += difference - prev_diff;
+                        }
+                    }
+                }
+            }
+
+            i += 1;
+
+            let path = format!("output/output{}_{}.png", input_count, i);
+        
+            imgbuffer.lock().unwrap().save(path).unwrap();
+
+            println!("Done saving output{}_{}.png with an improvement of {:.2} ({:.2}%) using {} unique lines",input_count, i, improvement, (improvement / perfect_score) * 100.0, lines.len());
+
+            if improvement == 0.0 {
+                println!("Completed due to no more improvements to be made");
+                imgbuf = imgbuffer.lock().unwrap().clone();
+                break;
+            }
+
+            if i % 10 == 0 {
+                let mut total_score: f64 = 0.0;
+                for (x, y, pixel) in imgbuffer.lock().unwrap().enumerate_pixels() {
+                    total_score += color_difference_pixel(img.lock().unwrap().get_pixel(x, y as u32), pixel);
+                }
+
+                let percent_change = (total_score / perfect_score) * 100.0;
+
+                println!("Generated image is {:.2}% of the original", percent_change);
+
+                if percent_change > 98.0 {
+                    println!("Completed due to being too close to the source image");
+                    imgbuf = imgbuffer.lock().unwrap().clone();
+                    break;
+                }
+            }
         }
     }
 }
