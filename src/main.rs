@@ -274,7 +274,7 @@ fn main() {
 
                     lines = Arc::new(Mutex::new(new_lines));
                 } else {
-                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i) / 100) {
+                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i * 2) / 100) {
                         let line = p_lines[index as usize];
 
                         if line.score > 0.0 {
