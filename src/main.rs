@@ -130,6 +130,8 @@ fn main() {
 
     let mut input_count = 0;
 
+    let mut t = 0;
+
     for entry in input {
         let path = entry.unwrap().path();
 
@@ -274,7 +276,7 @@ fn main() {
 
                     lines = Arc::new(Mutex::new(new_lines));
                 } else {
-                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i * 2) / 100) {
+                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i + t) / 100) {
                         let line = p_lines[index as usize];
 
                         if line.score > 0.0 {
@@ -314,6 +316,7 @@ fn main() {
             }
 
             i += 1;
+            t += 1;
 
             let path = format!("output/output{}_{}.png", input_count, i);
         
