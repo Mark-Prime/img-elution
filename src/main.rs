@@ -5,6 +5,7 @@ use std::{cmp, fs::DirBuilder};
 use palette::{FromColor, ColorDifference, Srgb, Lab};
 use std::{thread, fs};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[derive(Copy, Clone, Debug)]
 struct SlopeLine {
@@ -12,11 +13,13 @@ struct SlopeLine {
     origin: i32,
     color: [u8; 3],
     pub score: f64,
-    pub count: i32
+    pub count: i32,
+    pub xmin: u32,
+    pub xmax: u32
 }
 
 impl SlopeLine {
-    fn new(x:u32) -> SlopeLine {
+    fn new(x: u32, y: u32) -> SlopeLine {
         let mut rng = thread_rng();
 
         let slope: f32 = ((rng.gen_range(-5.0..=5.0) * 1000.0) as f32).floor() / 1000.0;
@@ -32,16 +35,24 @@ impl SlopeLine {
         let r = rng.gen_range(0..256) as u8;
         let g = rng.gen_range(0..256) as u8;
         let b = rng.gen_range(0..256) as u8;
+
+        let xmin = cmp::max(((0 - origin) as f32 / slope) as i32, 0) as u32;
+        let xmax = ((y as i32 - origin) as f32 / slope) as u32;
+
+        let xmax = cmp::min(xmax, x);
+
         SlopeLine {
             slope: slope,
             origin: origin,
             color: [r, g, b],
             score: 0.0,
-            count: 1
+            count: 1,
+            xmin: xmin,
+            xmax: xmax
         }
     }
 
-    fn give_birth(&self) -> SlopeLine {
+    fn give_birth(&self, x: u32, y: u32) -> SlopeLine {
         let mut rng = thread_rng();
 
         let mut slope: f32 = self.slope.clone();
@@ -58,12 +69,19 @@ impl SlopeLine {
         g = rng.gen_range(g - (cmp::min(g, 20) as u8)..=cmp::min(g as i32  + 20, 255) as u8);
         b = rng.gen_range(b - (cmp::min(b, 20) as u8)..=cmp::min(b as i32 + 20, 255) as u8);
 
+        let xmin = cmp::max(((0 - origin) as f32 / slope) as i32, 0) as u32;
+        let xmax = ((y as i32 - origin) as f32 / slope) as u32;
+
+        let xmax = cmp::min(xmax, x);
+
         let new_line = SlopeLine {
             slope: slope,
             origin: origin,
             color: [r, g, b],
             score: 0.0,
-            count: 1
+            count: 1,
+            xmin: xmin,
+            xmax: xmax
         };
 
         return new_line;
@@ -158,22 +176,25 @@ fn main() {
         }
 
         let perfect_score = (imgx * imgy) as f64 * 100.0;
-        
-        println!("Img dimensions: {} {}", imgx, imgy);
 
-        DirBuilder::new().recursive(true).create("./output").expect("Error in folder creation");
-        imgbuf.save("output/output0.png").expect("Error in file creation");
+        if t == 0 {
+            println!("Img dimensions: {} {}", imgx, imgy);
+
+            DirBuilder::new().recursive(true).create("./output").expect("Error in folder creation");
+            imgbuf.save("output/output0.png").expect("Error in file creation");
+        }
 
         let imgbuffer = Arc::new(Mutex::new(imgbuf));
 
         let mut i = 0;
 
         loop {
+            let now = Instant::now();
             let mut lines = Arc::new(Mutex::new(vec!()));
             let processed_lines = Arc::new(Mutex::new(vec![]));
                 
             for _ in 0..500 {
-                lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+                lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx, imgy))));
             }
 
             for f in 0..100 {
@@ -196,7 +217,7 @@ fn main() {
                                 continue;
                             }
 
-                            for x in 0..imgx {
+                            for x in line.xmin..line.xmax {
                                 let y = (line.slope*x as f32) as i32 + line.origin;
 
                                 if y >= 0 && y < imgy as i32 {
@@ -264,14 +285,14 @@ fn main() {
                         }
 
                         new_lines.push(Arc::new(Mutex::new(line)));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
-                        new_lines.push(Arc::new(Mutex::new(line.give_birth())));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth(imgx, imgy))));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth(imgx, imgy))));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth(imgx, imgy))));
+                        new_lines.push(Arc::new(Mutex::new(line.give_birth(imgx, imgy))));
                     }
 
                     while new_lines.len() < 500 {
-                        new_lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx))));
+                        new_lines.push(Arc::new(Mutex::new(SlopeLine::new(imgx, imgy))));
                     }
 
                     lines = Arc::new(Mutex::new(new_lines));
@@ -294,7 +315,7 @@ fn main() {
             for line_index in (0..lines.len()).rev() {
                 let line = lines[line_index].lock().unwrap();
 
-                for x in 0..imgx {
+                for x in line.xmin..line.xmax {
                     let y = (line.slope*x as f32) as i32 + line.origin;
 
                     if y >= 0 && y < imgy as i32 {
@@ -322,7 +343,7 @@ fn main() {
         
             imgbuffer.lock().unwrap().save(path).unwrap();
 
-            println!("Done saving output{}_{}.png with an improvement of {:.2} ({:.2}%) using {} unique lines",input_count, i, improvement, (improvement / perfect_score) * 100.0, lines.len());
+            println!("Done saving output{}_{}.png\tlines: {}\ttime: {:.2}s\timprovement: {:.2} ({:.2}%)",input_count, i, lines.len(), now.elapsed().as_secs_f32(), improvement, (improvement / perfect_score) * 100.0);
 
             if improvement == 0.0 {
                 println!("Completed due to no more improvements to be made");
