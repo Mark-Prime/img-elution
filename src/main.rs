@@ -133,6 +133,14 @@ fn color_difference_pixel(rgb1: &Rgb<u8>, rgb2: &Rgb<u8>) -> f64 {
 }
 
 fn main() {
+    let total_lines = 500; // lines generated at the start of each cycle
+    let runs = 100; // total number of runs per cycle
+    let minimum_cycles = 2; // minimum number of cycles before checking if the image is done
+    let minimum_likeness = 98.0; // minimum closeness to the original image before it moves on
+
+    let minimum_lines = 1;
+    let maximum_lines = 100;
+
     let input = fs::read_dir("./input").expect("Folder not found");
 
     let first_img_path = fs::read_dir("./input").expect("Folder not found").next().expect("Folder is empty").expect("Folder is empty");
@@ -193,11 +201,11 @@ fn main() {
             let mut lines = Arc::new(Mutex::new(vec!()));
             let processed_lines = Arc::new(Mutex::new(vec![]));
                 
-            for _ in 0..500 {
+            for _ in 0..total_lines {
                 lines.lock().unwrap().push(Arc::new(Mutex::new(SlopeLine::new(imgx, imgy))));
             }
 
-            for f in 0..100 {
+            for f in 0..runs {
                 let mut handles = vec![];
 
                 for thread_count in 0..5 {
@@ -297,7 +305,7 @@ fn main() {
 
                     lines = Arc::new(Mutex::new(new_lines));
                 } else {
-                    for index in 0..cmp::min(100, (cmp::max(imgx, 1000) + i + t) / 100) {
+                    for index in 0..cmp::min(maximum_lines, (cmp::max(imgx, minimum_lines * 100) + i + t) / 100) {
                         let line = p_lines[index as usize];
 
                         if line.score > 0.0 {
@@ -351,7 +359,7 @@ fn main() {
                 break;
             }
 
-            if i % 10 == 0 {
+            if i % minimum_cycles == 0 {
                 let mut total_score: f64 = 0.0;
                 for (x, y, pixel) in imgbuffer.lock().unwrap().enumerate_pixels() {
                     total_score += color_difference_pixel(img.lock().unwrap().get_pixel(x, y as u32), pixel);
@@ -361,7 +369,7 @@ fn main() {
 
                 println!("Generated image is {:.2}% of the original", percent_change);
 
-                if percent_change > 98.0 {
+                if percent_change > minimum_likeness {
                     println!("Completed due to being too close to the source image");
                     imgbuf = imgbuffer.lock().unwrap().clone();
                     break;
